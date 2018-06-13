@@ -19,8 +19,10 @@ sudo apt-get -y install mysql-server
 sudo apt-get install -y git python-setuptools python-dev libavcodec-dev libavformat-dev libswscale-dev libjpeg62 libjpeg62-dev libfreetype6 libfreetype6-dev apache2 libapache2-mod-wsgi mysql-server mysql-client libmysqlclient-dev gfortran
 sudo apt-get install -y libav-tools
 
-sudo easy_install -U SQLAlchemy pillow wsgilog mysql-python munkres parsedatetime argparse
-sudo easy_install -U numpy
+sudo apt-get install python-setuptools
+sudo easy_install pip
+sudo pip install SQLAlchemy pillow wsgilog mysql-python munkres parsedatetime argparse
+sudo pip install numpy
 
 git clone https://github.com/cvondrick/turkic.git
 git clone https://github.com/cluePrints/pyvision.git
@@ -32,7 +34,6 @@ cd ..
 
 # without this bit cython pyvision compilation fails
 sudo apt-get install -y g++ make
-sudo easy_install pip
 sudo pip install cython==0.20
 
 cd pyvision
