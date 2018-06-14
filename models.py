@@ -8,6 +8,7 @@ import vision
 from vision.track.interpolation import LinearFill
 import random
 import logging
+import os
 import config
 
 logger = logging.getLogger("vatic.models")
@@ -40,11 +41,10 @@ class Video(turkic.database.Base):
 
     @classmethod
     def getframepath(cls, frame, base = None):
-        l1 = frame / 10000
-        l2 = frame / 100
-        path = "{0}/{1}/{2}.jpg".format(l1, l2, frame)
+        path = "{0}.jpg".format(frame)
         if base is not None:
-            path = "{0}/{1}".format(base, path)
+            # path = "{0}/{1}".format(base, path)
+            path = os.path.join(base, path)
         return path
 
     @property

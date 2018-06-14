@@ -23,6 +23,7 @@ import datetime, time
 import vision.pascal
 import itertools
 from xml.etree import ElementTree
+import numpy as np
 
 @handler("Decompresses an entire video into frames")
 class extract(Command):
@@ -80,23 +81,22 @@ class formatframes(Command):
         except:
             pass
         extension = ".{0}".format(args.extension)
-        files = os.listdir(args.video)
-        files = (x for x in files if x.endswith(extension))
-        files = [(int(x.split(".")[0]), x) for x in files]
-        files.sort()
-        files = [(x, y) for x, (_, y) in enumerate(files)]
-        if not files:
+
+        files = sorted([name for name in os.listdir(args.video) if os.path.splitext(name)[-1] == extension])
+        if len(files) == 0:
             print "No files ending with {0}".format(extension)
             return
-        for frame, file in files:
+
+        for frame, name in enumerate(files):
             path = Video.getframepath(frame, args.output)
-            file = os.path.join(args.video, file)
+            filename = os.path.join(args.video, name)
             try:
-                os.link(file, path)
+                os.link(filename, path)
             except OSError:
                 os.makedirs(os.path.dirname(path))
-                os.link(file, path)
+                os.link(filename, path)
         print "Formatted {0} frames".format(len(files))
+
 
 @handler("Imports a set of video frames")
 class load(LoadCommand):
@@ -105,7 +105,7 @@ class load(LoadCommand):
         parser.add_argument("slug")
         parser.add_argument("location")
         parser.add_argument("labels", nargs="+")
-        parser.add_argument("--length", type=int, default = 300)
+        parser.add_argument("--length", type=int, default = 1000)
         parser.add_argument("--overlap", type=int, default = 20)
         parser.add_argument("--skip", type=int, default = 0)
         parser.add_argument("--per-object-bonus", type=float)
@@ -120,7 +120,7 @@ class load(LoadCommand):
         parser.add_argument("--for-training-overlap", type=float, default=0.25)
         parser.add_argument("--for-training-tolerance", type=float, default=0.2)
         parser.add_argument("--for-training-mistakes", type=int, default=0)
-        parser.add_argument("--for-training-data", default = None)
+        parser.add_argument("--data", default = None)
         parser.add_argument("--blow-radius", default = 3)
         return parser
 
@@ -154,13 +154,8 @@ class load(LoadCommand):
         print "Searching for last frame..."
 
         # search for last frame
-        toplevel = max(int(x)
-            for x in os.listdir(args.location))
-        secondlevel = max(int(x)
-            for x in os.listdir("{0}/{1}".format(args.location, toplevel)))
         maxframes = max(int(os.path.splitext(x)[0])
-            for x in os.listdir("{0}/{1}/{2}"
-            .format(args.location, toplevel, secondlevel))) + 1
+            for x in os.listdir(args.location)) + 1
 
         print "Found {0} frames.".format(maxframes)
 
@@ -198,7 +193,7 @@ class load(LoadCommand):
 
         # create video
         video = Video(slug = args.slug,
-                      location = os.path.realpath(args.location), 
+                      location = os.path.realpath(args.location),
                       width = width,
                       height = height,
                       totalframes = maxframes,
@@ -250,7 +245,8 @@ class load(LoadCommand):
 
         print "Creating segments..."
         # create shots and jobs
-       
+
+        jobs = []
         if args.for_training:
                 segment = Segment(video = video)
                 if args.for_training_start:
@@ -268,6 +264,7 @@ class load(LoadCommand):
                 job = Job(segment = segment, group = group, ready = False)
                 session.add(segment)
                 session.add(job)
+                jobs.append(job)
         elif args.use_frames:
             with open(args.use_frames) as useframes:
                 for line in useframes:
@@ -281,11 +278,12 @@ class load(LoadCommand):
                         stop = min(start + segmentlength + args.overlap + 1,
                                    ustop)
                         segment = Segment(start = start,
-                                          stop = stop, 
+                                          stop = stop,
                                           video = video)
                         job = Job(segment = segment, group = group)
                         session.add(segment)
                         session.add(job)
+                        jobs.append(job)
         else:
             startframe = args.start_frame
             stopframe = args.stop_frame
@@ -300,6 +298,7 @@ class load(LoadCommand):
                 job = Job(segment = segment, group = group)
                 session.add(segment)
                 session.add(job)
+                jobs.append(job)
 
         if args.per_object_bonus:
             group.schedules.append(
@@ -310,10 +309,16 @@ class load(LoadCommand):
 
         session.add(group)
 
-        if args.for_training and args.for_training_data:
-            print ("Loading training ground truth annotations from {0}"
-                        .format(args.for_training_data))
-            with open(args.for_training_data, "r") as file:
+        if args.data:
+            def find_job(jobs, frame):
+                diffs = np.asarray([int(frame) - job.segment.start for job in jobs], dtype=int)
+                diffs[diffs < 0] = args.length
+                ind = np.argmin(diffs)
+                return jobs[ind]
+
+            print ("Loading annotations from {0}"
+                        .format(args.data))
+            with open(args.data, "r") as file:
                 pathcache = {}
                 for line in file:
                     (id, xtl, ytl, xbr, ybr,
@@ -326,7 +331,7 @@ class load(LoadCommand):
                     if id not in pathcache:
                         print "Imported new path {0}".format(id)
                         label = labelcache[label.strip()[1:-1]]
-                        pathcache[id] = Path(job = job, label = label)
+                        pathcache[id] = Path(job = find_job(jobs, frame), label = label)
 
                     box = Box(path = pathcache[id])
                     box.xtl = int(xtl)
@@ -341,7 +346,7 @@ class load(LoadCommand):
         session.commit()
 
         if args.for_training:
-            if args.for_training and args.for_training_data:
+            if args.for_training and args.data:
                 print "Video and ground truth loaded."
             else:
                 print "Video loaded and ready for ground truth:"
@@ -416,7 +421,7 @@ class DumpCommand(Command):
         video = video.one()
 
         if args.merge:
-            for boxes, paths in merge.merge(video.segments, 
+            for boxes, paths in merge.merge(video.segments,
                                             threshold = args.merge_threshold):
                 workers = list(set(x.job.workerid for x in paths))
                 tracklet = DumpCommand.Tracklet(paths[0].label.text,
@@ -464,7 +469,7 @@ class visualize(DumpCommand):
 
     def __call__(self, args):
         video, data = self.getdata(args)
-        
+
         # prepend class label
         for track in data:
             for box in track.boxes:
@@ -803,7 +808,7 @@ class dump(DumpCommand):
                     lastframe = box.frame
                 else:
                     output = True
-                    
+
                 if output:
                     file.write("<event>");
                     file.write("<username>anonymous</username>")
@@ -830,7 +835,7 @@ class dump(DumpCommand):
 
         file.write("</annotation>")
         file.write("\n")
-    
+
     def dumppascal(self, folder, video, data, difficultthresh, skip,
                    negdir):
         byframe = {}
@@ -855,7 +860,7 @@ class dump(DumpCommand):
             os.makedirs("{0}/JPEGImages/".format(folder))
         except:
             pass
-        
+
         numdifficult = 0
         numtotal = 0
 
@@ -1061,7 +1066,7 @@ class sample(Command):
                                     label = True) for x in job.paths]
 
                 if args.frames > job.segment.stop - job.segment.start:
-                    frames = range(job.segment.start, job.segment.stop + 1) 
+                    frames = range(job.segment.start, job.segment.stop + 1)
                 else:
                     frames = random.sample(xrange(job.segment.start,
                                                 job.segment.stop + 1),
@@ -1137,7 +1142,7 @@ class find(Command):
             print "No jobs matching this criteria."
 
 @handler("List all videos loaded", "list")
-class listvideos(Command):
+class list(Command):
     def setup(self):
         parser = argparse.ArgumentParser()
         parser.add_argument("--completed", action="store_true", default=False)
